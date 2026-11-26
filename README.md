@@ -307,6 +307,79 @@ $LASTEXITCODE
 
 Stress, latency, dan checkout dengan injeksi error **sengaja dirancang melanggar SLO**. Mendapat `SLO FAIL` pada kasus itu merupakan hasil belajar yang diharapkan, bukan alasan mengganti threshold agar semua terlihat hijau.
 
+### Langkah 6 — alternatif cepat: semua lewat Docker + PowerShell
+
+Jika tidak ingin memasang .NET SDK, API dan NBomber bisa dijalankan di Docker. Yang dibutuhkan hanya **Docker Desktop** (sudah menyala) dan **PowerShell 7 (`pwsh`)**. Script `stress-test.ps1` melakukan semuanya: build image, menyalakan API, menunggu `/health`, menjalankan test, lalu mematikan API.
+
+Jalankan dari folder repo:
+
+```powershell
+./stress-test.ps1
+```
+
+Kasus lain:
+
+```powershell
+./stress-test.ps1 throughput 500
+```
+
+```powershell
+./stress-test.ps1 error-rate 0
+```
+
+Semua pilihan:
+
+| Perintah | Arti |
+| --- | --- |
+| `./stress-test.ps1` | Stress test inventory (default) |
+| `./stress-test.ps1 load` | Load test katalog, 50 RPS selama 120 detik |
+| `./stress-test.ps1 stress` | Stress test: 50 → 100 → 150 → 250 → 50 RPS, masing-masing 30 detik |
+| `./stress-test.ps1 throughput 500` | Throughput layanan harga pada 500 RPS (1..2000, default 300) |
+| `./stress-test.ps1 latency` | Latency percentiles pencarian produk |
+| `./stress-test.ps1 error-rate 0` | Checkout dengan 0% kegagalan payment (0..100, default 10) |
+| `./stress-test.ps1 load -KeepApi` | Sama seperti di atas, tetapi API tidak dimatikan setelah test |
+
+File yang dipakai: `Dockerfile`, `docker-compose.yml`, `stress-test.ps1`. Container NBomber berbagi jaringan dengan container API, sehingga alamat `http://127.0.0.1:5080` di `Program.cs` tetap berlaku. Report tersimpan di folder `reports/` pada komputer Anda. Pastikan port 5080 tidak sedang dipakai (misalnya API dari Langkah 2) sebelum menjalankan script.
+
+#### Cara membaca hasilnya
+
+Contoh nyata dari `./stress-test.ps1` (kasus stress):
+
+```text
+status codes for scenario: stress_inventory
+│ status code │ count │ message      │
+│         200 │ 12012 │              │
+│         503 │ 5988  │ HTTP non-2xx │
+
+all=18000, ok=12012, fail=5988, error=33.27%
+Successful RPS=80.08, p95 OK=698.88 ms, p99 OK=702.98 ms
+error_rate: FAIL
+Summary: /app/reports/stress-.../summary.json
+SLO FAIL
+Report: C:\...\nbomber-tutorials\reports\stress-...
+Exit code: 1 (0 = SLO PASS, 1 = SLO FAIL, 2 = INVALID)
+```
+
+Baca dari atas ke bawah:
+
+1. **Tabel `status codes`**: berapa kali server membalas tiap status. `200` berarti berhasil; `503` berarti API menolak karena kelebihan beban (pool inventory hanya 20 slot). Status lain atau error koneksi berarti masalah lingkungan, bukan hasil latihan.
+2. **`all / ok / fail / error`**: total request, yang sukses, yang gagal, dan persentase gagal. Di sini `5988 / 18000 = 33,27%`.
+3. **`Successful RPS`**: throughput yang *berhasil*, bukan beban yang dikirim. Beban dikirim rata-rata 120 RPS, tetapi hanya ±80 RPS yang sukses: itulah batas kapasitas endpoint ini.
+4. **`p95` / `p99`**: 95% dan 99% request sukses selesai di bawah angka ini. p95 ≈ 699 ms artinya request yang sukses pun harus antre lama karena slot penuh.
+5. **Baris `nama_check: PASS/FAIL`**: SLO mana yang lulus. Stress hanya memeriksa `error_rate < 1%`; kasus lain juga memeriksa `p95`, `p99`, atau `throughput`.
+6. **Baris kesimpulan**: `SLO PASS`, `SLO FAIL`, atau `INVALID` (sampel kurang atau ada error selain 503, hasil tidak boleh dipakai).
+7. **`Exit code`**: angka yang sama untuk otomatisasi/CI: `0` lulus, `1` melanggar SLO, `2` run tidak valid.
+
+`Summary:` menampilkan path **di dalam container** (`/app/reports/...`). Di komputer Anda, buka path yang ada di baris `Report:`. Folder tersebut berisi:
+
+| File | Kegunaan |
+| --- | --- |
+| `summary.json` | Angka keputusan di atas (`okCount`, `failCount`, `errorRate`, `successfulRps`, `p95`, `p99`, `checks`, `executionValid`, `sloPassed`) |
+| `*.html` | Report NBomber dengan grafik per detik. Untuk stress, lihat kapan `fail` mulai naik (fase 150/250 RPS) dan apakah turun lagi di fase 50 RPS terakhir (pemulihan) |
+| `*.csv` / `*.md` | Data yang sama untuk spreadsheet atau dilampirkan ke laporan |
+
+Untuk kasus stress, `SLO FAIL` di atas adalah **hasil yang diharapkan**: tujuannya menemukan titik rusak, bukan lulus. Kesimpulan yang baik misalnya: *"Inventory stabil sampai ±100 RPS; di atas itu sepertiga request ditolak 503 dan p95 naik ke ±700 ms; setelah beban turun ke 50 RPS layanan pulih."* (pastikan bagian pemulihan dengan grafik HTML). Panduan lengkap menulis kesimpulan ada di [bagian 10](#10-membaca-report-dan-menulis-kesimpulan).
+
 ## 5. Load — katalog pada jam sibuk
 
 ### 5.1 Pertanyaan dan kebutuhan kualitas
