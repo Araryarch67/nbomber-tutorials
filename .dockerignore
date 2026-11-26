@@ -1,0 +1,5 @@
+**/bin/
+**/obj/
+reports/
+logs/
+.git/

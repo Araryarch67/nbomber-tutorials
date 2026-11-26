@@ -1,0 +1,12 @@
+services:
+  api:
+    build: { context: ., target: api }
+    ports: ["5080:5080"]
+
+  tests:
+    build: { context: ., target: tests }
+    # Berbagi network namespace dengan api, jadi http://127.0.0.1:5080 di Program.cs tetap valid.
+    network_mode: "service:api"
+    depends_on: [api]
+    volumes: ["./reports:/app/reports"]
+    profiles: ["tests"]
